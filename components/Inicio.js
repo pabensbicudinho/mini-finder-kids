@@ -4,35 +4,33 @@ import {
 } from 'react-native';
 import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { listarCriancas } from '../database/db';
 
 export default function Inicio({ userData, onNavigate }) {
   const [criancas, setCriancas] = useState([]);
   const insets = useSafeAreaInsets();
 
+  // Carrega as crianças quando a tela é montada
   useEffect(() => {
-    const carregarCriancas = async () => {
+    const carregar = async () => {
       try {
-        const criancasSalvas = await AsyncStorage.getItem('@lista_criancas');
-        if (criancasSalvas) {
-          setCriancas(JSON.parse(criancasSalvas));
-        }
+        const lista = await listarCriancas();
+        setCriancas(lista);
       } catch (error) {
         console.error('Erro ao carregar crianças:', error);
       }
     };
-    carregarCriancas();
-  }, []);
+    carregar();
+  }, [userData]); // Re-executa quando userData muda (após voltar de NovaCrianca)
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header com ícone de perfil */}
       <View style={styles.header}>
         <Text style={styles.headerTitle}>Minhas crianças</Text>
 
         <TouchableOpacity
           style={styles.profileButton}
-          onPress={() => onNavigate('perfil', userData)}
+          onPress={() => onNavigate('perfil')}
           activeOpacity={0.7}
         >
           <Ionicons name="person-circle-outline" size={34} color="#1a237e" />
@@ -66,7 +64,6 @@ export default function Inicio({ userData, onNavigate }) {
           ))
         )}
 
-        {/* Botão Adicionar Nova Criança */}
         <TouchableOpacity
           style={styles.addButton}
           onPress={() => onNavigate('novaCriancas')}
@@ -82,13 +79,12 @@ export default function Inicio({ userData, onNavigate }) {
         </TouchableOpacity>
       </ScrollView>
 
-      {/* Menu Inferior com padding dinâmico da Safe Area */}
       <View style={[styles.bottomNav, { paddingBottom: insets.bottom + 10 }]}>
         <TouchableOpacity style={styles.navItem} onPress={() => onNavigate('inicio')}>
           <Ionicons name="home" size={22} color="#1E3A8A" />
           <Text style={styles.navTextActive}>Início</Text>
         </TouchableOpacity>
-        <TouchableOpacity style={styles.navItem} onPress={() => onNavigate('perfil', userData)}>
+        <TouchableOpacity style={styles.navItem} onPress={() => onNavigate('perfil')}>
           <Ionicons name="person-outline" size={22} color="#9CA3AF" />
           <Text style={styles.navText}>Perfil</Text>
         </TouchableOpacity>
@@ -100,17 +96,11 @@ export default function Inicio({ userData, onNavigate }) {
 const styles = StyleSheet.create({
   container: { flex: 1, backgroundColor: '#FAFAFA' },
   header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-    paddingHorizontal: 20,
-    paddingVertical: 15,
-    backgroundColor: '#FAFAFA',
+    flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
+    paddingHorizontal: 20, paddingVertical: 15, backgroundColor: '#FAFAFA',
   },
   headerTitle: { fontSize: 22, fontWeight: '700', color: '#1a237e' },
-  profileButton: {
-    padding: 4,
-  },
+  profileButton: { padding: 4 },
   scrollContent: { paddingHorizontal: 20, paddingBottom: 100 },
   emptyText: { fontSize: 14, color: '#9CA3AF', textAlign: 'center', marginTop: 40, marginBottom: 20 },
   childCard: {
@@ -144,11 +134,11 @@ const styles = StyleSheet.create({
   bottomNav: {
     position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row',
     justifyContent: 'space-around', paddingVertical: 12,
-    backgroundColor: '#FFF', borderTopWidth: 1, borderTopColor: '#F3F4F6',
-    shadowColor: '#000', shadowOffset: { width: 0, height: -2 },
-    shadowOpacity: 0.05, shadowRadius: 5, elevation: 10,
+    backgroundColor: '#FFFFFF', borderTopWidth: 1, borderTopColor: '#F3F4F6',
+    elevation: 10, shadowColor: '#000', shadowOffset: { width: 0, height: -2 },
+    shadowOpacity: 0.08, shadowRadius: 4,
   },
-  navItem: { alignItems: 'center', justifyContent: 'center', padding: 5 },
-  navText: { fontSize: 10, color: '#9CA3AF', fontWeight: '500', marginTop: 2 },
+  navItem: { alignItems: 'center', justifyContent: 'center', minWidth: 70 },
+  navText: { fontSize: 10, color: '#9CA3AF', marginTop: 2 },
   navTextActive: { fontSize: 10, color: '#1E3A8A', fontWeight: '700', marginTop: 2 },
 });

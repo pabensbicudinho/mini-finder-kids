@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
-  View, Text, StyleSheet, TouchableOpacity,
+  View, Text, StyleSheet, TouchableOpacity, Platform,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
@@ -10,6 +10,18 @@ import * as Location from 'expo-location';
 export default function MapaCriancaAlerta({ userData, onNavigate }) {
   const [location, setLocation] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  const webMapRef = useRef(null);
+  const webMarkerRef = useRef(null);
+  const webMapContainerRef = useRef(null);
+
+  const nomeCrianca = userData?.nome || 'Criança';
+
+  /*
+   * ============================================================
+   * LOCALIZAÇÃO
+   * ============================================================
+   */
 
   useEffect(() => {
     let locationSubscription = null;
@@ -54,39 +66,218 @@ export default function MapaCriancaAlerta({ userData, onNavigate }) {
     };
   }, []);
 
-  const nomeCrianca = userData?.nome || 'Criança';
+  /*
+   * ============================================================
+   * HTML DO MAPA PARA ANDROID / IOS
+   * ============================================================
+   */
 
-  // HTML que será renderizado no WebView (Leaflet + OpenStreetMap)
-  const gerarHTML = (lat, lng, nome) => `
-    <!DOCTYPE html>
-    <html>
-    <head>
-      <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
-      <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-      <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-      <style>
-        body { margin: 0; padding: 0; }
-        #map { width: 100vw; height: 100vh; }
-      </style>
-    </head>
-    <body>
-      <div id="map"></div>
-      <script>
-        var map = L.map('map').setView([${lat}, ${lng}], 16);
-        L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-          maxZoom: 19,
-          attribution: '© OpenStreetMap'
-        }).addTo(map);
-        var marker = L.marker([${lat}, ${lng}]).addTo(map);
-        marker.bindPopup("<b>${nome}</b><br>Localização do alerta").openPopup();
-      </script>
-    </body>
-    </html>
-  `;
+  const gerarHTML = (lat, lng, nome) => {
+    const nomeSeguro = String(nome)
+      .replace(/\\/g, '\\\\')
+      .replace(/"/g, '\\"')
+      .replace(/'/g, "\\'")
+      .replace(/\n/g, ' ');
+
+    return `
+      <!DOCTYPE html>
+      <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+        <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+        <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+        <style>
+          html, body { margin: 0; padding: 0; width: 100%; height: 100%; overflow: hidden; }
+          #map { width: 100%; height: 100%; }
+        </style>
+      </head>
+      <body>
+        <div id="map"></div>
+        <script>
+          var latitude = ${lat};
+          var longitude = ${lng};
+
+          var map = L.map('map', { zoomControl: true }).setView([latitude, longitude], 16);
+
+          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap'
+          }).addTo(map);
+
+          var marker = L.marker([latitude, longitude]).addTo(map);
+          marker.bindPopup("<b>${nomeSeguro}</b><br>Localização do alerta").openPopup();
+
+          document.addEventListener('message', function(event) {
+            try {
+              var data = JSON.parse(event.data);
+              if (data.latitude && data.longitude) {
+                var novaPosicao = [data.latitude, data.longitude];
+                marker.setLatLng(novaPosicao);
+                map.setView(novaPosicao, map.getZoom());
+              }
+            } catch (error) {
+              console.error('Erro ao atualizar mapa:', error);
+            }
+          });
+        </script>
+      </body>
+      </html>
+    `;
+  };
+
+  /*
+   * ============================================================
+   * ATUALIZA MAPA NATIVO
+   * ============================================================
+   */
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' && location && webMapRef.current) {
+      const mensagem = JSON.stringify({
+        latitude: location.latitude,
+        longitude: location.longitude,
+      });
+      webMapRef.current.postMessage(mensagem);
+    }
+  }, [location]);
+
+  /*
+   * ============================================================
+   * MAPA WEB
+   * ============================================================
+   */
+
+  useEffect(() => {
+    if (Platform.OS !== 'web' || !location || !webMapContainerRef.current) {
+      return;
+    }
+
+    let ativo = true;
+
+    const iniciarMapaWeb = async () => {
+      try {
+        const L = await import('leaflet');
+
+        if (!document.getElementById('leaflet-css')) {
+          const link = document.createElement('link');
+          link.id = 'leaflet-css';
+          link.rel = 'stylesheet';
+          link.href = 'https://unpkg.com/leaflet@1.9.4/dist/leaflet.css';
+          document.head.appendChild(link);
+        }
+
+        if (!ativo) return;
+
+        if (!webMapRef.current) {
+          webMapRef.current = L.map(webMapContainerRef.current).setView(
+            [location.latitude, location.longitude],
+            16
+          );
+
+          L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '&copy; OpenStreetMap',
+          }).addTo(webMapRef.current);
+
+          delete L.Icon.Default.prototype._getIconUrl;
+          L.Icon.Default.mergeOptions({
+            iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
+            iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+            shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+          });
+
+          webMarkerRef.current = L.marker([location.latitude, location.longitude]).addTo(webMapRef.current);
+          webMarkerRef.current
+            .bindPopup(`<b>${nomeCrianca}</b><br/>Localização do alerta`)
+            .openPopup();
+        }
+
+        if (webMarkerRef.current) {
+          const novaPosicao = [location.latitude, location.longitude];
+          webMarkerRef.current.setLatLng(novaPosicao);
+          webMapRef.current.setView(novaPosicao, webMapRef.current.getZoom());
+        }
+      } catch (error) {
+        console.error('Erro ao carregar mapa Web:', error);
+      }
+    };
+
+    iniciarMapaWeb();
+
+    return () => {
+      ativo = false;
+    };
+  }, [location, nomeCrianca]);
+
+  /*
+   * ============================================================
+   * LIMPEZA DO MAPA WEB
+   * ============================================================
+   */
+
+  useEffect(() => {
+    return () => {
+      if (webMapRef.current) {
+        webMapRef.current.remove();
+        webMapRef.current = null;
+        webMarkerRef.current = null;
+      }
+    };
+  }, []);
+
+  /*
+   * ============================================================
+   * RENDERIZAÇÃO DO MAPA
+   * ============================================================
+   */
+
+  const renderMapa = () => {
+    if (errorMsg) {
+      return (
+        <View style={styles.mapErrorContainer}>
+          <Ionicons name="location-outline" size={40} color="#DC2626" />
+          <Text style={styles.mapErrorText}>{errorMsg}</Text>
+        </View>
+      );
+    }
+
+    if (!location) {
+      return (
+        <View style={styles.mapLoadingContainer}>
+          <Ionicons name="navigate-outline" size={36} color="#1E3A8A" />
+          <Text style={styles.mapLoadingText}>Buscando sinal do GPS...</Text>
+        </View>
+      );
+    }
+
+    if (Platform.OS !== 'web') {
+      return (
+        <WebView
+          ref={webMapRef}
+          style={styles.map}
+          originWhitelist={['*']}
+          source={{ html: gerarHTML(location.latitude, location.longitude, nomeCrianca) }}
+          javaScriptEnabled
+          domStorageEnabled
+          startInLoadingState
+          showsVerticalScrollIndicator={false}
+          showsHorizontalScrollIndicator={false}
+        />
+      );
+    }
+
+    return <View ref={webMapContainerRef} style={styles.map} />;
+  };
+
+  /*
+   * ============================================================
+   * INTERFACE
+   * ============================================================
+   */
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header com seta que volta para o Alerta */}
+      {/* HEADER */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => onNavigate('alerta', userData)}
@@ -101,28 +292,10 @@ export default function MapaCriancaAlerta({ userData, onNavigate }) {
         <View style={styles.headerSpacer} />
       </View>
 
-      {/* Mapa Real (OpenStreetMap via Leaflet) */}
+      {/* MAPA */}
       <View style={styles.mapContainer}>
-        {errorMsg ? (
-          <View style={styles.mapErrorContainer}>
-            <Text style={styles.mapErrorText}>{errorMsg}</Text>
-          </View>
-        ) : location ? (
-          <WebView
-            style={styles.map}
-            originWhitelist={['*']}
-            source={{ html: gerarHTML(location.latitude, location.longitude, nomeCrianca) }}
-            javaScriptEnabled={true}
-            domStorageEnabled={true}
-            startInLoadingState={true}
-          />
-        ) : (
-          <View style={styles.mapLoadingContainer}>
-            <Text style={styles.mapLoadingText}>Buscando sinal do GPS...</Text>
-          </View>
-        )}
+        {renderMapa()}
 
-        {/* Informações do GPS (sobrepostas ao mapa) */}
         <View style={styles.gpsInfo}>
           <Text style={styles.gpsInfoText}>
             {location
@@ -167,11 +340,11 @@ const styles = StyleSheet.create({
   mapLoadingContainer: {
     flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#E0F2FE',
   },
-  mapLoadingText: { fontSize: 13, color: '#6B7280' },
+  mapLoadingText: { fontSize: 13, color: '#6B7280', marginTop: 8 },
   mapErrorContainer: {
     flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#FEE2E2', padding: 20,
   },
-  mapErrorText: { fontSize: 13, color: '#DC2626', textAlign: 'center' },
+  mapErrorText: { fontSize: 13, color: '#DC2626', textAlign: 'center', marginTop: 8 },
   gpsInfo: {
     position: 'absolute',
     bottom: 10, left: 10, right: 10,

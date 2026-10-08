@@ -1,9 +1,11 @@
 import React, { useState } from 'react';
 import {
   StyleSheet, Text, View, TextInput, TouchableOpacity,
-  Alert, ScrollView, SafeAreaView,
+  Alert, ScrollView,
 } from 'react-native';
-import AsyncStorage from '@react-native-async-storage/async-storage';
+import { SafeAreaView } from 'react-native-safe-area-context';
+import { Ionicons } from '@expo/vector-icons';
+import { cadastrarCrianca } from '../database/db';
 
 export default function NovaCrianca({ onNavigate }) {
   const [nome, setNome] = useState('');
@@ -17,28 +19,22 @@ export default function NovaCrianca({ onNavigate }) {
     }
 
     try {
-      const criancasSalvas = await AsyncStorage.getItem('@lista_criancas');
-      const listaCriancas = criancasSalvas ? JSON.parse(criancasSalvas) : [];
+      const result = await cadastrarCrianca(
+        nome.trim(),
+        idade.trim(),
+        dispositivo.trim().toUpperCase(),
+        '🧒',
+        '#FEF3C7'
+      );
 
-      const novaCrianca = {
-        id: Date.now(),
-        nome: nome.trim(),
-        idade: idade.trim(),
-        dispositivo: dispositivo.trim().toUpperCase(),
-        avatar: '🧒',
-        color: '#FEF3C7',
-        status: 'Dispositivo conectado',
-      };
-
-      listaCriancas.push(novaCrianca);
-      await AsyncStorage.setItem('@lista_criancas', JSON.stringify(listaCriancas));
-
-      setNome('');
-      setIdade('');
-      setDispositivo('');
-
-      // Redireciona DIRETO para a tela inicial (sem pop-up)
-      onNavigate('inicio');
+      if (result.success) {
+        setNome('');
+        setIdade('');
+        setDispositivo('');
+        onNavigate('inicio');
+      } else {
+        Alert.alert('Erro', 'Não foi possível salvar os dados.');
+      }
     } catch (error) {
       console.error('Erro ao salvar criança:', error);
       Alert.alert('Erro', 'Não foi possível salvar os dados. Tente novamente.');
@@ -47,14 +43,13 @@ export default function NovaCrianca({ onNavigate }) {
 
   return (
     <SafeAreaView style={styles.container}>
-      {/* Header com botão voltar */}
       <View style={styles.header}>
         <TouchableOpacity
           onPress={() => onNavigate('inicio')}
           style={styles.backButton}
           activeOpacity={0.7}
         >
-          <Text style={styles.backIcon}>{'‹'}</Text>
+          <Ionicons name="chevron-back" size={28} color="#1A237E" />
         </TouchableOpacity>
 
         <Text style={styles.headerTitle}>Nova criança</Text>
@@ -111,10 +106,7 @@ export default function NovaCrianca({ onNavigate }) {
           <Text style={styles.buttonText}>Salvar criança</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity
-          onPress={() => onNavigate('inicio')}
-          activeOpacity={0.7}
-        >
+        <TouchableOpacity onPress={() => onNavigate('inicio')} activeOpacity={0.7}>
           <Text style={styles.cancelText}>Cancelar</Text>
         </TouchableOpacity>
       </ScrollView>
@@ -133,7 +125,6 @@ const styles = StyleSheet.create({
   backButton: {
     width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-start',
   },
-  backIcon: { fontSize: 32, color: '#1A237E', fontWeight: '400', lineHeight: 36 },
   headerSpacer: { width: 40 },
   scrollContent: { padding: 20, paddingBottom: 40 },
   subtitle: { fontSize: 14, color: '#6B7280', marginBottom: 25, lineHeight: 20 },

@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-// import { initDatabase } from './database/db';  // <-- COMENTADO (reativar no celular)
+import { initDatabase } from './database/db';
+
 import Login from './components/Login';
 import Cadastro from './components/Cadastro';
 import Inicio from './components/Inicio';
@@ -16,14 +17,14 @@ export default function App() {
   const [previousScreen, setPreviousScreen] = useState('inicio');
   const [loggedUser, setLoggedUser] = useState(null);
   const [selectedChild, setSelectedChild] = useState(null);
-  const [dbReady, setDbReady] = useState(true); // <-- Já inicia como true
+  const [dbReady, setDbReady] = useState(false);
 
   useEffect(() => {
     const setup = async () => {
       try {
-        // await initDatabase();  // <-- COMENTADO (reativar no celular)
+        await initDatabase();
         setDbReady(true);
-        console.log('Modo Web: banco de dados desativado temporariamente.');
+        console.log('Banco de dados pronto.');
       } catch (error) {
         console.error('Erro ao inicializar banco:', error);
       }
@@ -52,9 +53,7 @@ export default function App() {
     setCurrentScreen(screen);
   };
 
-  if (!dbReady) {
-    return null;
-  }
+  if (!dbReady) return null;
 
   return (
     <SafeAreaProvider>

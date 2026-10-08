@@ -19,14 +19,13 @@ export default function Login({ onNavigate }) {
     }
 
     try {
-      // Usa o SQLite para validar o login
-      const user = await loginUsuario(email, password);
+      const result = await loginUsuario(email, password);
 
-      if (user) {
-        Alert.alert('Sucesso', `Bem-vindo(a), ${user.nome}!`);
-        onNavigate('inicio', user);
+      if (result.success) {
+        Alert.alert('Sucesso', `Bem-vindo(a), ${result.user.nome}!`);
+        onNavigate('inicio', result.user);
       } else {
-        Alert.alert('Erro', 'E-mail ou senha incorretos.');
+        Alert.alert('Erro', result.message || 'E-mail ou senha incorretos.');
       }
     } catch (error) {
       console.error('Erro no login:', error);
@@ -130,7 +129,6 @@ export default function Login({ onNavigate }) {
 }
 
 const styles = StyleSheet.create({
-  // ... (mantenha os mesmos estilos que você já tem)
   safeArea: { flex: 1, backgroundColor: '#f5f7fa' },
   keyboardContainer: { flex: 1, backgroundColor: '#f5f7fa' },
   scrollContainer: { flexGrow: 1, justifyContent: 'center', paddingBottom: 60 },
