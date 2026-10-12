@@ -12,11 +12,21 @@ import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context'
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
 import * as Location from 'expo-location';
-import { salvarLocalizacao, verificarPerimetro } from '../database/db';
+import {
+  salvarLocalizacao,
+  verificarPerimetro,
+  listarLocalizacoes,
+  listarPerimetros,
+} from '../database/db';
+import { treinarModelo, analisarPosicao } from '../services/iaService';
 
 export default function Mapa({ userData, onNavigate }) {
   const [location, setLocation] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  // 🧠 Estados da IA
+  const [iaInicializada, setIaInicializada] = useState(false);
+  const [alertaDisparado, setAlertaDisparado] = useState(false);
 
   const insets = useSafeAreaInsets();
 
@@ -24,7 +34,56 @@ export default function Mapa({ userData, onNavigate }) {
   const webMarkerRef = useRef(null);
   const webMapContainerRef = useRef(null);
 
+  // 🧠 Ref que guarda o modelo treinado + perímetros
+  const iaModeloRef = useRef({ modelo: null, perimetros: [] });
+
   const nomeCrianca = userData?.nome || 'Criança';
+
+  /*
+   * ============================================================
+   * 🧠 IA: TREINAR MODELO COM O HISTÓRICO AO ABRIR A TELA
+   * ============================================================
+   */
+
+  useEffect(() => {
+    let ativo = true;
+
+    const inicializarIA = async () => {
+      if (!userData?.id) return;
+
+      try {
+        console.log('🧠 Inicializando IA preditiva...');
+
+        const [historico, perimetros] = await Promise.all([
+          listarLocalizacoes(userData.id),
+          listarPerimetros(userData.id),
+        ]);
+
+        const modelo = treinarModelo(historico || []);
+        console.log('🧠 Modelo treinado:', {
+          treinado: modelo.treinado,
+          mediaDistancia: modelo.mediaDistancia,
+          desvioPadrao: modelo.desvioPadrao,
+          limiarAnomalia: modelo.limiarAnomalia,
+          locaisHabituais: modelo.locaisHabituais?.length || 0,
+          totalRegistros: modelo.totalRegistros,
+        });
+
+        if (!ativo) return;
+
+        iaModeloRef.current = { modelo, perimetros: perimetros || [] };
+        setIaInicializada(true);
+      } catch (error) {
+        console.error('❌ Erro ao inicializar IA:', error);
+      }
+    };
+
+    inicializarIA();
+
+    return () => {
+      ativo = false;
+    };
+  }, [userData]);
 
   /*
    * ============================================================
@@ -52,7 +111,6 @@ export default function Mapa({ userData, onNavigate }) {
         if (isMounted) {
           setLocation(currentLocation.coords);
 
-          // Salva a localização inicial
           if (userData?.id) {
             await salvarLocalizacao(
               userData.id,
@@ -65,35 +123,54 @@ export default function Mapa({ userData, onNavigate }) {
         locationSubscription = await Location.watchPositionAsync(
           {
             accuracy: Location.Accuracy.High,
-            timeInterval: 180000, // 3 minutos
+            timeInterval: 180000,
             distanceInterval: 10,
           },
           async (newLocation) => {
-            if (isMounted) {
-              setLocation(newLocation.coords);
+            if (!isMounted) return;
 
-              // Salva a cada atualização
-              if (userData?.id) {
-                await salvarLocalizacao(
-                  userData.id,
-                  newLocation.coords.latitude,
-                  newLocation.coords.longitude
-                );
+            setLocation(newLocation.coords);
 
-                // Verifica se saiu do perímetro seguro
-                const resultado = await verificarPerimetro(
-                  userData.id,
-                  newLocation.coords.latitude,
-                  newLocation.coords.longitude
-                );
+            if (!userData?.id) return;
 
-                if (resultado.saiu) {
-                  Alert.alert(
-                    '⚠️ Alerta de Segurança',
-                    `${userData.nome} saiu da área segura "${resultado.local}" (${resultado.distancia}m)`
-                  );
-                }
-              }
+            await salvarLocalizacao(
+              userData.id,
+              newLocation.coords.latitude,
+              newLocation.coords.longitude
+            );
+
+            const resultado = await verificarPerimetro(
+              userData.id,
+              newLocation.coords.latitude,
+              newLocation.coords.longitude
+            );
+
+            const { modelo, perimetros } = iaModeloRef.current;
+            const analise = analisarPosicao({
+              posicaoAtual: {
+                latitude: newLocation.coords.latitude,
+                longitude: newLocation.coords.longitude,
+              },
+              modelo,
+              perimetros,
+            });
+
+            console.log('🧠 Análise IA:', analise);
+
+            if (analise.anomalia && !alertaDisparado) {
+              setAlertaDisparado(true);
+
+              Alert.alert(
+                'Alerta de Segurança',
+                analise.motivo || `${userData.nome} saiu da área segura.`,
+                [
+                  { text: 'Ficar aqui', style: 'cancel' },
+                  {
+                    text: 'Ver alerta',
+                    onPress: () => onNavigate('alerta', userData),
+                  },
+                ]
+              );
             }
           }
         );
@@ -109,7 +186,41 @@ export default function Mapa({ userData, onNavigate }) {
       isMounted = false;
       if (locationSubscription) locationSubscription.remove();
     };
-  }, []);
+  }, [userData, alertaDisparado]);
+
+  /*
+   * ============================================================
+   * 🧠 IA: ANALISAR POSIÇÃO ATUAL QUANDO A LOCALIZAÇÃO CHEGA
+   * ============================================================
+   */
+
+  useEffect(() => {
+    if (!location || !iaInicializada || alertaDisparado) return;
+
+    const { modelo, perimetros } = iaModeloRef.current;
+
+    const analise = analisarPosicao({
+      posicaoAtual: location,
+      modelo,
+      perimetros,
+    });
+
+    if (analise.anomalia) {
+      setAlertaDisparado(true);
+
+      Alert.alert(
+        'Alerta de Segurança',
+        analise.motivo || `${nomeCrianca} saiu da área segura.`,
+        [
+          { text: 'Ficar aqui', style: 'cancel' },
+          {
+            text: 'Ver alerta',
+            onPress: () => onNavigate('alerta', userData),
+          },
+        ]
+      );
+    }
+  }, [location, iaInicializada, alertaDisparado]);
 
   /*
    * ============================================================
@@ -361,7 +472,7 @@ export default function Mapa({ userData, onNavigate }) {
         </View>
       </View>
 
-      {/* STATUS */}
+      {/* STATUS - LINHA 1: 3 PRIMEIROS ÍCONES */}
       <View style={styles.statusRow}>
         <TouchableOpacity
           style={styles.statusItem}
@@ -374,14 +485,22 @@ export default function Mapa({ userData, onNavigate }) {
           <Text style={styles.statusText}>Perfil criança</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.statusItem} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.statusItem}
+          onPress={() => onNavigate('historicoCrianca', userData)}
+          activeOpacity={0.7}
+        >
           <View style={styles.statusIconCircle}>
             <Ionicons name="time-outline" size={24} color="#1E3A8A" />
           </View>
           <Text style={styles.statusText}>Ver histórico</Text>
         </TouchableOpacity>
 
-        <TouchableOpacity style={styles.statusItem} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.statusItem}
+          onPress={() => onNavigate('novaRota', userData)}
+          activeOpacity={0.7}
+        >
           <View style={styles.statusIconCircle}>
             <Ionicons name="shield-checkmark-outline" size={24} color="#1E3A8A" />
           </View>
@@ -389,15 +508,30 @@ export default function Mapa({ userData, onNavigate }) {
         </TouchableOpacity>
       </View>
 
-      {/* EMERGÊNCIA */}
-      <TouchableOpacity
-        style={styles.emergencyButton}
-        onPress={() => Alert.alert('Emergência', 'Acionando...')}
-        activeOpacity={0.8}
-      >
-        <Ionicons name="call" size={20} color="#FFFFFF" style={{ marginRight: 8 }} />
-        <Text style={styles.emergencyButtonText}>Emergência</Text>
-      </TouchableOpacity>
+      {/* STATUS - LINHA 2: MICROFONE + CÂMERA */}
+      <View style={styles.statusRowSecondary}>
+        <TouchableOpacity
+          style={styles.statusItem}
+          onPress={() => onNavigate('historicoMicrofone', userData)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.statusIconCircle}>
+            <Ionicons name="mic-outline" size={24} color="#1E3A8A" />
+          </View>
+          <Text style={styles.statusText}>Microfone</Text>
+        </TouchableOpacity>
+
+        <TouchableOpacity
+          style={styles.statusItem}
+          onPress={() => onNavigate('historicoCamera', userData)}
+          activeOpacity={0.7}
+        >
+          <View style={styles.statusIconCircle}>
+            <Ionicons name="camera-outline" size={24} color="#1E3A8A" />
+          </View>
+          <Text style={styles.statusText}>Câmera</Text>
+        </TouchableOpacity>
+      </View>
 
       {/* MENU INFERIOR */}
       <View style={[styles.bottomNav, { paddingBottom: insets.bottom + 10 }]}>
@@ -498,9 +632,24 @@ const styles = StyleSheet.create({
     padding: 6, borderRadius: 8,
   },
   gpsInfoText: { fontSize: 10, color: '#333333', textAlign: 'center' },
+
+  // LINHA 1: 3 ícones lado a lado
   statusRow: {
-    flexDirection: 'row', justifyContent: 'space-around', marginBottom: 20, paddingHorizontal: 10,
+    flexDirection: 'row',
+    justifyContent: 'space-around',
+    marginBottom: 15,
+    paddingHorizontal: 10,
   },
+
+  // LINHA 2: microfone + câmera centralizados
+  statusRowSecondary: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 30,
+    marginBottom: 20,
+    paddingHorizontal: 10,
+  },
+
   statusItem: { alignItems: 'center', width: 90 },
   statusIconCircle: {
     width: 50, height: 50, borderRadius: 25, backgroundColor: '#FFFFFF',
@@ -509,22 +658,7 @@ const styles = StyleSheet.create({
     shadowOpacity: 0.1, shadowRadius: 2,
   },
   statusText: { fontSize: 12, color: '#4B5563', fontWeight: '500', textAlign: 'center' },
-  emergencyButton: {
-    backgroundColor: '#DC2626',
-    paddingVertical: 15,
-    borderRadius: 14,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexDirection: 'row',
-    marginHorizontal: 20,
-    marginTop: 5,
-    elevation: 4,
-    shadowColor: '#DC2626',
-    shadowOffset: { width: 0, height: 3 },
-    shadowOpacity: 0.25,
-    shadowRadius: 4,
-  },
-  emergencyButtonText: { color: '#FFFFFF', fontSize: 16, fontWeight: 'bold' },
+
   bottomNav: {
     position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row',
     justifyContent: 'space-around', paddingVertical: 12,

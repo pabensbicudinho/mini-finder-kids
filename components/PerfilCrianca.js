@@ -8,6 +8,39 @@ import { Ionicons } from '@expo/vector-icons';
 export default function PerfilCrianca({ userData, onNavigate }) {
   const insets = useSafeAreaInsets();
 
+  console.log('🟢 PerfilCrianca recebeu userData:', userData);
+
+  // ============================================================
+  // 📊 FORMATAR IDADE COM "ANOS"
+  // ============================================================
+  const formatarIdade = () => {
+    const idade = userData?.idade;
+    if (!idade) return 'Idade não informada';
+
+    const idadeStr = String(idade).trim();
+    if (/ano/i.test(idadeStr)) return idadeStr;
+
+    const numero = parseInt(idadeStr, 10);
+    if (isNaN(numero)) return idadeStr;
+
+    return numero === 1 ? '1 ano' : `${numero} anos`;
+  };
+
+  // ============================================================
+  // NAVEGAÇÃO
+  // ============================================================
+  const handleAreaSegura = () => {
+    if (!onNavigate) {
+      console.error('❌ onNavigate NÃO é uma função!');
+      return;
+    }
+    onNavigate('novaRota', userData);
+  };
+
+  const handleHistorico = () => {
+    onNavigate('historicoCrianca', userData);
+  };
+
   return (
     <SafeAreaView style={styles.container}>
       {/* Header */}
@@ -28,6 +61,7 @@ export default function PerfilCrianca({ userData, onNavigate }) {
       <ScrollView
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
       >
         {/* Avatar + Nome + Idade */}
         <View style={styles.card}>
@@ -36,8 +70,10 @@ export default function PerfilCrianca({ userData, onNavigate }) {
               <Ionicons name="person" size={50} color="#1E3A8A" />
             </View>
             <View style={styles.childHeaderInfo}>
-              <Text style={styles.childName}>{userData?.nome || 'Nome da criança'}</Text>
-              <Text style={styles.childAge}>{userData?.idade || 'Idade'}</Text>
+              <Text style={styles.childName}>
+                {userData?.nome || 'Nome da criança'}
+              </Text>
+              <Text style={styles.childAge}>{formatarIdade()}</Text>
             </View>
           </View>
         </View>
@@ -59,7 +95,7 @@ export default function PerfilCrianca({ userData, onNavigate }) {
           </View>
         </View>
 
-        {/* Bateria */}
+        {/* Bateria — apenas o ícone */}
         <View style={styles.card}>
           <View style={styles.infoRow}>
             <View style={styles.infoIconCircle}>
@@ -73,26 +109,36 @@ export default function PerfilCrianca({ userData, onNavigate }) {
         </View>
 
         {/* Área segura */}
-        <TouchableOpacity style={styles.card} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.card}
+          onPress={handleAreaSegura}
+          activeOpacity={0.5}
+        >
           <View style={styles.infoRow}>
             <View style={styles.infoIconCircle}>
               <Ionicons name="location-outline" size={22} color="#1E3A8A" />
             </View>
             <View style={styles.infoTextContainer}>
               <Text style={styles.infoTitle}>Área segura</Text>
+              <Text style={styles.infoSubtitle}>Definir rota segura</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
           </View>
         </TouchableOpacity>
 
         {/* Rotina habitual */}
-        <TouchableOpacity style={styles.card} activeOpacity={0.7}>
+        <TouchableOpacity
+          style={styles.card}
+          onPress={handleHistorico}
+          activeOpacity={0.5}
+        >
           <View style={styles.infoRow}>
             <View style={styles.infoIconCircle}>
               <Ionicons name="home-outline" size={22} color="#1E3A8A" />
             </View>
             <View style={styles.infoTextContainer}>
               <Text style={styles.infoTitle}>Rotina habitual</Text>
+              <Text style={styles.infoSubtitle}>Ver histórico</Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
           </View>
@@ -150,7 +196,6 @@ const styles = StyleSheet.create({
   },
   scrollContent: { padding: 20, paddingBottom: 120 },
 
-  // Card genérico
   card: {
     backgroundColor: '#FFF',
     borderRadius: 16,
@@ -165,7 +210,6 @@ const styles = StyleSheet.create({
     shadowRadius: 4,
   },
 
-  // Cabeçalho da criança (avatar + nome)
   childHeader: { flexDirection: 'row', alignItems: 'center' },
   avatarCircle: {
     width: 80, height: 80, borderRadius: 40,
@@ -177,7 +221,6 @@ const styles = StyleSheet.create({
   childName: { fontSize: 22, fontWeight: '700', color: '#1E3A8A' },
   childAge: { fontSize: 15, color: '#6B7280', marginTop: 4 },
 
-  // Linhas de informação
   infoRow: { flexDirection: 'row', alignItems: 'center' },
   infoIconCircle: {
     width: 44, height: 44, borderRadius: 22,
@@ -189,7 +232,6 @@ const styles = StyleSheet.create({
   infoTitle: { fontSize: 15, fontWeight: '700', color: '#333' },
   infoSubtitle: { fontSize: 12, color: '#6B7280', marginTop: 2 },
 
-  // Status "Conectado"
   statusContainer: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -201,7 +243,6 @@ const styles = StyleSheet.create({
   },
   statusText: { fontSize: 12, color: '#10B981', fontWeight: '600' },
 
-  // Menu Inferior
   bottomNav: {
     position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row',
     justifyContent: 'space-around', paddingVertical: 12,

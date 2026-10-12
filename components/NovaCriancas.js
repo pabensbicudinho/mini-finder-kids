@@ -33,7 +33,7 @@ export default function NovaCrianca({ onNavigate }) {
         setDispositivo('');
         onNavigate('inicio');
       } else {
-        Alert.alert('Erro', 'Não foi possível salvar os dados.');
+        Alert.alert('Erro', result.message || 'Não foi possível salvar os dados.');
       }
     } catch (error) {
       console.error('Erro ao salvar criança:', error);

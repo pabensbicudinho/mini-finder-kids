@@ -65,6 +65,16 @@ export default function Perfil({ userData, onNavigate, previousScreen }) {
           </View>
         </View>
 
+        {/* Botão de Debug do Banco */}
+        <TouchableOpacity
+          style={styles.debugButton}
+          onPress={() => onNavigate('debug')}
+          activeOpacity={0.8}
+        >
+          <Ionicons name="bug-outline" size={22} color="#1E3A8A" />
+          <Text style={styles.debugText}>Debug do Banco</Text>
+        </TouchableOpacity>
+
         {/* Botão de Sair */}
         <TouchableOpacity
           style={styles.logoutButton}
@@ -152,12 +162,34 @@ const styles = StyleSheet.create({
   infoLabel: { fontSize: 13, fontWeight: '700', color: '#1E3A8A', marginBottom: 6 },
   infoValue: { fontSize: 15, color: '#333', fontWeight: '400' },
   divider: { height: 1, backgroundColor: '#F3F4F6' },
+
+  // Botão de Debug
+  debugButton: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginHorizontal: 20,
+    marginTop: 30,
+    paddingVertical: 15,
+    borderRadius: 12,
+    borderWidth: 1.5,
+    borderColor: '#1E3A8A',
+    backgroundColor: '#FFF',
+  },
+  debugText: {
+    color: '#1E3A8A',
+    fontSize: 16,
+    fontWeight: '700',
+    marginLeft: 8,
+  },
+
+  // Botão de Sair
   logoutButton: {
     flexDirection: 'row',
     alignItems: 'center',
     justifyContent: 'center',
     marginHorizontal: 20,
-    marginTop: 40,
+    marginTop: 15,
     paddingVertical: 15,
     borderRadius: 12,
     borderWidth: 1.5,
@@ -170,6 +202,7 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     marginLeft: 8,
   },
+
   bottomNav: {
     position: 'absolute', bottom: 0, left: 0, right: 0, flexDirection: 'row',
     justifyContent: 'space-around', paddingVertical: 12,
