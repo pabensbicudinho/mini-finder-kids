@@ -20,23 +20,9 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
   const webCircleRef = useRef(null);
   const webMapContainerRef = useRef(null);
 
-  // ============================================================
-  // DEFINIR TELA DE VOLTA
-  // Volta para a tela anterior real (previousScreen).
-  // Só cai no fallback se não houver previousScreen válido.
-  // ============================================================
   const getTelaDeVolta = () => {
-    // Se não veio de lugar nenhum, usa o padrão
-    if (!previousScreen) {
-      return 'perfilCrianca';
-    }
-
-    // Proteção: não voltar para ela mesma (evita loop)
-    if (previousScreen === 'rotaDetalhes') {
-      return 'perfilCrianca';
-    }
-
-    // Qualquer outra tela → volta para ela
+    if (!previousScreen) return 'perfilCrianca';
+    if (previousScreen === 'rotaDetalhes') return 'perfilCrianca';
     return previousScreen;
   };
 
@@ -46,9 +32,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
     onNavigate(telaVolta, userData);
   };
 
-  // ============================================================
-  // CARREGAR ROTA/PERÍMETRO DA CRIANÇA
-  // ============================================================
   useEffect(() => {
     const carregarDados = async () => {
       try {
@@ -71,7 +54,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
           perimetroEncontrado = perimetros[perimetros.length - 1];
         }
 
-        // Se tem perímetro, usa ele como base
         if (perimetroEncontrado) {
           setPerimetro(perimetroEncontrado);
         } else if (rotaEncontrada) {
@@ -92,7 +74,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
           setRota(rotaEncontrada);
         }
 
-        // Busca endereço
         const lat = perimetroEncontrado?.latitude
           || rotaEncontrada?.latitudeDestino
           || rotaEncontrada?.latitude_destino;
@@ -100,7 +81,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
           || rotaEncontrada?.longitudeDestino
           || rotaEncontrada?.longitude_destino;
 
-        // Se a rota já tem os dados do endereço salvos, usa direto
         const enderecoSalvo = rotaEncontrada?.logradouro
           ? {
               logradouro: rotaEncontrada.logradouro,
@@ -115,7 +95,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
         if (enderecoSalvo) {
           setEndereco(enderecoSalvo);
         } else if (lat && lng) {
-          // Busca via API
           const resultado = await coordenadasParaEndereco(lat, lng);
           if (resultado.success) {
             setEndereco(resultado.endereco);
@@ -135,9 +114,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
     carregarDados();
   }, [userData]);
 
-  // ============================================================
-  // DELETAR
-  // ============================================================
   const handleDeletar = () => {
     Alert.alert(
       'Excluir área segura',
@@ -151,7 +127,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
             try {
               if (rota?.id) await deletarRota(rota.id);
               Alert.alert('Sucesso', 'Área segura excluída.');
-              // Após excluir, volta para a tela anterior real
               onNavigate(getTelaDeVolta(), userData);
             } catch (error) {
               console.error(error);
@@ -164,10 +139,67 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
   };
 
   // ============================================================
-  // HTML DO MAPA
+  // HTML DO MAPA (com trajeto)
   // ============================================================
-  const gerarHTML = (lat, lng, raioMetros, nome) => {
-    const nomeSeguro = String(nome || 'Área Segura').replace(/'/g, "\\'");
+  const gerarHTML = (rota, perimetro) => {
+    const origem = rota
+      ? {
+          latitude: rota.latitudeOrigem || rota.latitude_origem,
+          longitude: rota.longitudeOrigem || rota.longitude_origem,
+        }
+      : null;
+
+    const destino = rota
+      ? {
+          latitude: rota.latitudeDestino || rota.latitude_destino,
+          longitude: rota.longitudeDestino || rota.longitude_destino,
+        }
+      : {
+          latitude: perimetro?.latitude,
+          longitude: perimetro?.longitude,
+        };
+
+    const polyline = rota?.coordenadas && rota.coordenadas.length > 0
+      ? rota.coordenadas
+      : (origem && destino ? [origem, destino] : []);
+
+    const pontosStr = JSON.stringify(
+      polyline.map((p) => [p.latitude, p.longitude])
+    );
+
+    const centro = destino;
+    const nomeSeguro = String(rota?.nome || perimetro?.nome || 'Área Segura').replace(/'/g, "\\'");
+    const raio = perimetro?.raio || 500;
+
+    const circleStr = `
+      L.circle([${centro.latitude}, ${centro.longitude}], {
+        color: '#1E3A8A', fillColor: '#3B82F6', fillOpacity: 0.15, radius: ${raio}
+      }).addTo(map);
+    `;
+
+    const polylineStr = polyline.length > 0 ? `
+      var pontos = ${pontosStr};
+      var polyline = L.polyline(pontos, {
+        color: '#1E3A8A', weight: 5, opacity: 0.85
+      }).addTo(map);
+
+      // Marcador origem (verde)
+      if (pontos.length > 0) {
+        L.circleMarker(pontos[0], {
+          radius: 8, color: '#10B981', fillColor: '#10B981', fillOpacity: 1
+        }).addTo(map).bindPopup('<b>Origem</b>');
+      }
+
+      // Marcador destino (vermelho)
+      if (pontos.length > 1) {
+        L.circleMarker(pontos[pontos.length - 1], {
+          radius: 8, color: '#DC2626', fillColor: '#DC2626', fillOpacity: 1
+        }).addTo(map).bindPopup('<b>${nomeSeguro}</b>');
+      }
+
+      map.fitBounds(polyline.getBounds(), { padding: [30, 30] });
+    ` : '';
+
     return `
       <!DOCTYPE html>
       <html>
@@ -183,14 +215,15 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
       <body>
         <div id="map"></div>
         <script>
-          var map = L.map('map', { zoomControl: false }).setView([${lat}, ${lng}], 15);
+          var map = L.map('map', { zoomControl: false })
+            .setView([${centro.latitude}, ${centro.longitude}], 14);
+
           L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19, attribution: '&copy; OpenStreetMap'
           }).addTo(map);
-          L.circle([${lat}, ${lng}], {
-            color: '#1E3A8A', fillColor: '#3B82F6', fillOpacity: 0.25, radius: ${raioMetros}
-          }).addTo(map);
-          L.marker([${lat}, ${lng}]).addTo(map).bindPopup("<b>${nomeSeguro}</b>").openPopup();
+
+          ${circleStr}
+          ${polylineStr}
         </script>
       </body>
       </html>
@@ -198,12 +231,14 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
   };
 
   // ============================================================
-  // MAPA WEB
+  // MAPA WEB (com trajeto)
   // ============================================================
   useEffect(() => {
     if (Platform.OS !== 'web' || !perimetro || !webMapContainerRef.current) return;
 
     let ativo = true;
+    let circleRef = null;
+    let polylineRef = null;
 
     const iniciarMapaWeb = async () => {
       try {
@@ -219,14 +254,25 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
 
         if (!ativo) return;
 
-        const lat = perimetro.latitude;
-        const lng = perimetro.longitude;
-        const raio = perimetro.raio || 500;
+        const destino = {
+          latitude: rota?.latitudeDestino || perimetro.latitude,
+          longitude: rota?.longitudeDestino || perimetro.longitude,
+        };
+        const origem = rota
+          ? {
+              latitude: rota.latitudeOrigem || rota.latitude_origem,
+              longitude: rota.longitudeOrigem || rota.longitude_origem,
+            }
+          : null;
+
+        const polyline = rota?.coordenadas && rota.coordenadas.length > 0
+          ? rota.coordenadas.map((p) => [p.latitude, p.longitude])
+          : (origem ? [[origem.latitude, origem.longitude], [destino.latitude, destino.longitude]] : []);
 
         if (!webMapRef.current) {
           webMapRef.current = L.map(webMapContainerRef.current, {
             zoomControl: false,
-          }).setView([lat, lng], 15);
+          }).setView([destino.latitude, destino.longitude], 14);
 
           L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19, attribution: '&copy; OpenStreetMap',
@@ -239,14 +285,32 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
             shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
           });
 
-          webCircleRef.current = L.circle([lat, lng], {
-            color: '#1E3A8A', fillColor: '#3B82F6', fillOpacity: 0.25, radius: raio,
+          // Círculo do perímetro
+          circleRef = L.circle([destino.latitude, destino.longitude], {
+            color: '#1E3A8A', fillColor: '#3B82F6', fillOpacity: 0.15,
+            radius: perimetro.raio || 500,
           }).addTo(webMapRef.current);
 
-          L.marker([lat, lng])
-            .addTo(webMapRef.current)
-            .bindPopup(`<b>${perimetro.nome || 'Área Segura'}</b>`)
-            .openPopup();
+          // Polilinha do trajeto
+          if (polyline.length > 0) {
+            polylineRef = L.polyline(polyline, {
+              color: '#1E3A8A', weight: 5, opacity: 0.85,
+            }).addTo(webMapRef.current);
+
+            // Marcadores
+            if (polyline.length > 0) {
+              L.circleMarker(polyline[0], {
+                radius: 8, color: '#10B981', fillColor: '#10B981', fillOpacity: 1,
+              }).addTo(webMapRef.current).bindPopup('<b>Origem</b>');
+            }
+            if (polyline.length > 1) {
+              L.circleMarker(polyline[polyline.length - 1], {
+                radius: 8, color: '#DC2626', fillColor: '#DC2626', fillOpacity: 1,
+              }).addTo(webMapRef.current).bindPopup(`<b>${rota?.nome || perimetro.nome}</b>`);
+            }
+
+            webMapRef.current.fitBounds(polylineRef.getBounds(), { padding: [30, 30] });
+          }
         }
       } catch (error) {
         console.error('Erro ao carregar mapa Web:', error);
@@ -255,7 +319,7 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
 
     iniciarMapaWeb();
     return () => { ativo = false; };
-  }, [perimetro]);
+  }, [perimetro, rota]);
 
   useEffect(() => {
     return () => {
@@ -267,22 +331,15 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
     };
   }, []);
 
-  // ============================================================
-  // RENDERIZAR MAPA
-  // ============================================================
   const renderMapa = () => {
     if (!perimetro) return null;
-
-    const lat = perimetro.latitude;
-    const lng = perimetro.longitude;
-    const raio = perimetro.raio || 500;
 
     if (Platform.OS !== 'web') {
       return (
         <WebView
           style={styles.map}
           originWhitelist={['*']}
-          source={{ html: gerarHTML(lat, lng, raio, perimetro.nome) }}
+          source={{ html: gerarHTML(rota, perimetro) }}
           javaScriptEnabled
           domStorageEnabled
           startInLoadingState
@@ -293,15 +350,11 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
     return <View ref={webMapContainerRef} style={styles.map} />;
   };
 
-  // Carregando
   if (carregando) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={handleVoltar}
-            style={styles.backButton}
-          >
+          <TouchableOpacity onPress={handleVoltar} style={styles.backButton}>
             <Ionicons name="chevron-back" size={28} color="#1A237E" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Área segura</Text>
@@ -314,15 +367,11 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
     );
   }
 
-  // Sem perímetro
   if (!perimetro) {
     return (
       <SafeAreaView style={styles.container}>
         <View style={styles.header}>
-          <TouchableOpacity
-            onPress={handleVoltar}
-            style={styles.backButton}
-          >
+          <TouchableOpacity onPress={handleVoltar} style={styles.backButton}>
             <Ionicons name="chevron-back" size={28} color="#1A237E" />
           </TouchableOpacity>
           <Text style={styles.headerTitle}>Área segura</Text>
@@ -347,14 +396,14 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
     );
   }
 
-  // Com perímetro
+  const distanciaMetros = rota?.distanciaMetros || rota?.distancia_metros;
+  const duracaoSegundos = rota?.duracaoSegundos || rota?.duracao_segundos;
+  const qtdPontos = rota?.coordenadas?.length || 0;
+
   return (
     <SafeAreaView style={styles.container}>
       <View style={styles.header}>
-        <TouchableOpacity
-          onPress={handleVoltar}
-          style={styles.backButton}
-        >
+        <TouchableOpacity onPress={handleVoltar} style={styles.backButton}>
           <Ionicons name="chevron-back" size={28} color="#1A237E" />
         </TouchableOpacity>
         <Text style={styles.headerTitle}>Área segura</Text>
@@ -375,14 +424,16 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
             </View>
             <View style={styles.addressHeaderText}>
               <Text style={styles.addressTitle}>{perimetro.nome || 'Área Segura'}</Text>
-              <Text style={styles.addressSubtitle}>Raio: {perimetro.raio || 500} metros</Text>
+              <Text style={styles.addressSubtitle}>
+                Raio: {perimetro.raio || 500} metros
+                {qtdPontos > 0 ? ` • ${qtdPontos} pontos` : ''}
+              </Text>
             </View>
           </View>
 
           <View style={styles.divider} />
 
           <View style={styles.addressBody}>
-            {/* Logradouro + Número */}
             {endereco?.logradouro ? (
               <View style={styles.addressLine}>
                 <Ionicons name="home-outline" size={18} color="#1E3A8A" />
@@ -396,7 +447,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
               </View>
             ) : null}
 
-            {/* Bairro */}
             {endereco?.bairro ? (
               <View style={styles.addressLine}>
                 <Ionicons name="map-outline" size={18} color="#1E3A8A" />
@@ -407,7 +457,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
               </View>
             ) : null}
 
-            {/* Cidade + Estado */}
             {endereco?.cidade ? (
               <View style={styles.addressLine}>
                 <Ionicons name="business-outline" size={18} color="#1E3A8A" />
@@ -421,7 +470,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
               </View>
             ) : null}
 
-            {/* CEP */}
             {endereco?.cep ? (
               <View style={styles.addressLine}>
                 <Ionicons name="mail-outline" size={18} color="#1E3A8A" />
@@ -432,7 +480,6 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
               </View>
             ) : null}
 
-            {/* Fallback */}
             {!endereco?.logradouro && !endereco?.cidade && endereco?.enderecoCompleto ? (
               <View style={styles.addressLine}>
                 <Ionicons name="location-outline" size={18} color="#1E3A8A" />
@@ -443,6 +490,24 @@ export default function RotaDetalhes({ userData, onNavigate, previousScreen }) {
               </View>
             ) : null}
           </View>
+
+          {/* INFO DE TRAJETO */}
+          {qtdPontos > 0 && (
+            <>
+              <View style={styles.divider} />
+              <View style={styles.trajetoBox}>
+                <Ionicons name="navigate" size={18} color="#1E3A8A" />
+                <View style={styles.trajetoTextContainer}>
+                  <Text style={styles.trajetoLabel}>Trajeto</Text>
+                  <Text style={styles.trajetoValue}>
+                    {qtdPontos} pontos
+                    {distanciaMetros ? ` • ${Math.round(distanciaMetros)} m` : ''}
+                    {duracaoSegundos ? ` • ${Math.round(duracaoSegundos / 60)} min` : ''}
+                  </Text>
+                </View>
+              </View>
+            </>
+          )}
         </View>
 
         <TouchableOpacity
@@ -480,7 +545,6 @@ const styles = StyleSheet.create({
     width: 40, height: 40, justifyContent: 'center', alignItems: 'flex-start',
   },
   scrollContent: { padding: 20, paddingBottom: 120 },
-
   loadingContainer: { flex: 1, justifyContent: 'center', alignItems: 'center' },
 
   emptyContainer: {
@@ -536,6 +600,18 @@ const styles = StyleSheet.create({
     textTransform: 'uppercase', letterSpacing: 0.5,
   },
   addressLineValue: {
+    fontSize: 14, color: '#1E3A8A', fontWeight: '600', marginTop: 2,
+  },
+
+  trajetoBox: {
+    flexDirection: 'row', alignItems: 'center',
+  },
+  trajetoTextContainer: { flex: 1, marginLeft: 10 },
+  trajetoLabel: {
+    fontSize: 11, fontWeight: '600', color: '#9CA3AF',
+    textTransform: 'uppercase', letterSpacing: 0.5,
+  },
+  trajetoValue: {
     fontSize: 14, color: '#1E3A8A', fontWeight: '600', marginTop: 2,
   },
 

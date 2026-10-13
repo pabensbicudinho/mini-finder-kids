@@ -34,7 +34,7 @@ export default function PerfilCrianca({ userData, onNavigate }) {
       console.error('❌ onNavigate NÃO é uma função!');
       return;
     }
-    onNavigate('novaRota', userData);
+    onNavigate('perimetrosSeguros', userData);
   };
 
   const handleHistorico = () => {
@@ -108,7 +108,7 @@ export default function PerfilCrianca({ userData, onNavigate }) {
           </View>
         </View>
 
-        {/* Área segura */}
+        {/* Perímetros seguros */}
         <TouchableOpacity
           style={styles.card}
           onPress={handleAreaSegura}
@@ -119,8 +119,10 @@ export default function PerfilCrianca({ userData, onNavigate }) {
               <Ionicons name="location-outline" size={22} color="#1E3A8A" />
             </View>
             <View style={styles.infoTextContainer}>
-              <Text style={styles.infoTitle}>Área segura</Text>
-              <Text style={styles.infoSubtitle}>Definir rota segura</Text>
+              <Text style={styles.infoTitle}>Perímetros seguros</Text>
+              <Text style={styles.infoSubtitle}>
+                Gerenciar áreas de monitoramento
+              </Text>
             </View>
             <Ionicons name="chevron-forward" size={20} color="#9CA3AF" />
           </View>

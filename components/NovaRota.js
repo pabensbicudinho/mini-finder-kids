@@ -7,10 +7,11 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Ionicons } from '@expo/vector-icons';
 import { WebView } from 'react-native-webview';
+import * as Location from 'expo-location';
 import { cepParaCoordenadas } from '../services/cepService';
+import { tracarRota } from '../services/rotaService';
 import { salvarRota } from '../database/db';
 
-// 🔑 Tela de retorno fixa desta tela
 const TELA_VOLTAR = 'mapa';
 
 export default function NovaRota({ userData, onNavigate, previousScreen }) {
@@ -25,9 +26,6 @@ export default function NovaRota({ userData, onNavigate, previousScreen }) {
   const webCircleRef = useRef(null);
   const webMapContainerRef = useRef(null);
 
-  // ============================================================
-  // VOLTAR SEMPRE PARA O MAPA
-  // ============================================================
   const handleVoltar = () => {
     console.log('🔙 Voltando para:', TELA_VOLTAR);
     onNavigate(TELA_VOLTAR, userData);
@@ -55,7 +53,6 @@ export default function NovaRota({ userData, onNavigate, previousScreen }) {
     try {
       console.log('🔍 Buscando CEP:', cepDestino);
       const resultado = await cepParaCoordenadas(cepDestino);
-      console.log('📥 Resultado:', resultado);
 
       if (resultado.success) {
         setCoordenadas({
@@ -74,7 +71,7 @@ export default function NovaRota({ userData, onNavigate, previousScreen }) {
       }
     } catch (error) {
       console.error('❌ Erro ao buscar CEP:', error);
-      Alert.alert('Erro', 'Não foi possível buscar o CEP. Verifique sua conexão.');
+      Alert.alert('Erro', 'Não foi possível buscar o CEP.');
     } finally {
       setBuscando(false);
     }
@@ -93,15 +90,54 @@ export default function NovaRota({ userData, onNavigate, previousScreen }) {
     setCarregando(true);
 
     try {
+      // 1) Pega localização atual (origem)
+      const { status } = await Location.requestForegroundPermissionsAsync();
+      if (status !== 'granted') {
+        Alert.alert('Erro', 'Permissão de localização negada.');
+        setCarregando(false);
+        return;
+      }
+
+      const posAtual = await Location.getCurrentPositionAsync({
+        accuracy: Location.Accuracy.High,
+      });
+
+      const origem = {
+        latitude: posAtual.coords.latitude,
+        longitude: posAtual.coords.longitude,
+      };
+
+      const destino = {
+        latitude: coordenadas.latitude,
+        longitude: coordenadas.longitude,
+      };
+
+      // 2) Traça a rota real via OSRM
+      console.log('🛣️ Traçando rota:', origem, '→', destino);
+      const resultadoRota = await tracarRota(origem, destino);
+
+      let polyline = [origem, destino];
+      let distanciaMetros = 0;
+      let duracaoSegundos = 0;
+
+      if (resultadoRota.success) {
+        polyline = resultadoRota.rota.coordenadas;
+        distanciaMetros = resultadoRota.rota.distanciaMetros;
+        duracaoSegundos = resultadoRota.rota.duracaoSegundos;
+        console.log('✅ Rota traçada:', polyline.length, 'pontos');
+      } else {
+        console.warn('⚠️ Falha ao traçar rota, usando linha reta.');
+      }
+
       const novaRota = {
         criancaId: userData?.id || 1,
         cepOrigem: '',
         cepDestino,
         nome: nomeArea,
-        latitudeOrigem: null,
-        longitudeOrigem: null,
-        latitudeDestino: coordenadas.latitude,
-        longitudeDestino: coordenadas.longitude,
+        latitudeOrigem: origem.latitude,
+        longitudeOrigem: origem.longitude,
+        latitudeDestino: destino.latitude,
+        longitudeDestino: destino.longitude,
         raio: parseInt(raio, 10),
         logradouro: coordenadas.logradouro || null,
         bairro: coordenadas.bairro || null,
@@ -109,24 +145,22 @@ export default function NovaRota({ userData, onNavigate, previousScreen }) {
         estado: coordenadas.estado || null,
         cep: coordenadas.cep || null,
         enderecoCompleto: coordenadas.endereco || null,
-        coordenadas: [],
-        distanciaMetros: 0,
-        duracaoSegundos: 0,
+        coordenadas: polyline,
+        distanciaMetros,
+        duracaoSegundos,
       };
 
       console.log('💾 Salvando rota:', novaRota);
-
       const resultado = await salvarRota(novaRota);
       setCarregando(false);
 
       if (resultado.success) {
         Alert.alert(
-          '✅ Área segura criada!',
-          `Nome: ${nomeArea}\nRaio: ${raio} metros`,
+          '✅ Rota criada!',
+          `Nome: ${nomeArea}\nTrajeto: ${polyline.length} pontos\nDistância: ${Math.round(distanciaMetros)}m`,
           [
             {
               text: 'Ver detalhes',
-              // Passa 'mapa' como origem para a seta do RotaDetalhes voltar ao mapa
               onPress: () => onNavigate('rotaDetalhes', userData, TELA_VOLTAR),
             },
             {

@@ -1,21 +1,45 @@
 // services/audioService.js
-import {
-  AudioModule,
-  setAudioModeAsync,
-  createAudioPlayer,
-  RecordingPresets,
-} from 'expo-audio';
-import { File, Directory, Paths } from 'expo-file-system';
+import { Platform } from 'react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 
+// 🔑 Import condicional — só carrega no mobile
+let FileSystem = null;
+let File = null;
+let Directory = null;
+let Paths = null;
+let AudioModule = null;
+let setAudioModeAsync = null;
+let createAudioPlayer = null;
+let RecordingPresets = null;
+
+if (Platform.OS !== 'web') {
+  const fs = require('expo-file-system');
+  FileSystem = fs;
+  File = fs.File;
+  Directory = fs.Directory;
+  Paths = fs.Paths;
+
+  const audio = require('expo-audio');
+  AudioModule = audio.AudioModule;
+  setAudioModeAsync = audio.setAudioModeAsync;
+  createAudioPlayer = audio.createAudioPlayer;
+  RecordingPresets = audio.RecordingPresets;
+}
+
 const STORAGE_KEY = '@historico_microfone';
-const AUDIO_DIR = new Directory(Paths.document, 'audios');
+
+// 🔑 Diretório só no mobile
+let AUDIO_DIR = null;
+if (Platform.OS !== 'web' && Directory && Paths) {
+  AUDIO_DIR = new Directory(Paths.document, 'audios');
+}
 
 // ============================================================
-// GARANTIR PASTA
+// GARANTIR PASTA (só no mobile)
 // ============================================================
 const garantirPasta = () => {
-  if (!AUDIO_DIR.exists) {
+  if (Platform.OS === 'web') return;
+  if (AUDIO_DIR && !AUDIO_DIR.exists) {
     AUDIO_DIR.create({ intermediates: true });
   }
 };
@@ -24,6 +48,18 @@ const garantirPasta = () => {
 // PERMISSÃO
 // ============================================================
 export const pedirPermissaoMicrofone = async () => {
+  if (Platform.OS === 'web') {
+    try {
+      // Web usa API do navegador
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      stream.getTracks().forEach((t) => t.stop());
+      return true;
+    } catch (error) {
+      console.error('Erro ao pedir permissão (web):', error);
+      return false;
+    }
+  }
+
   try {
     const status = await AudioModule.requestRecordingPermissionsAsync();
     return status.granted;
@@ -35,11 +71,35 @@ export const pedirPermissaoMicrofone = async () => {
 
 // ============================================================
 // INICIAR GRAVAÇÃO
-// Cria instância do recorder via AudioModule (API imperativa)
 // ============================================================
 let recorderInstance = null;
 
 export const iniciarGravacao = async () => {
+  if (Platform.OS === 'web') {
+    // Na web, usamos MediaRecorder
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      const chunks = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunks.push(e.data);
+      };
+
+      mediaRecorder._chunks = chunks;
+      mediaRecorder._stream = stream;
+      mediaRecorder.start();
+
+      recorderInstance = mediaRecorder;
+      console.log('🎙️ Gravação iniciada (web)');
+      return { success: true, recording: mediaRecorder };
+    } catch (error) {
+      console.error('Erro ao iniciar gravação (web):', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // Mobile
   try {
     garantirPasta();
 
@@ -48,21 +108,16 @@ export const iniciarGravacao = async () => {
       playsInSilentMode: true,
     });
 
-    // 🔑 API correta: AudioModule.AudioRecorder ou createAudioRecorder
-    // No expo-audio SDK 57, o construtor é acessível via AudioModule
     const { AudioRecorder } = AudioModule;
-
     if (!AudioRecorder) {
-      throw new Error('AudioRecorder não disponível no módulo');
+      throw new Error('AudioRecorder não disponível');
     }
 
     const recorder = new AudioRecorder(RecordingPresets.HIGH_QUALITY);
-
     await recorder.prepareToRecordAsync();
     recorder.record();
 
     recorderInstance = recorder;
-
     console.log('🎙️ Gravação iniciada');
     return { success: true, recording: recorder };
   } catch (error) {
@@ -75,6 +130,53 @@ export const iniciarGravacao = async () => {
 // PARAR GRAVAÇÃO E SALVAR
 // ============================================================
 export const pararGravacao = async (recorder, metadata = {}) => {
+  // Web
+  if (Platform.OS === 'web') {
+    try {
+      const rec = recorder || recorderInstance;
+      if (!rec) throw new Error('Nenhuma gravação ativa');
+
+      return new Promise((resolve) => {
+        rec.onstop = async () => {
+          const blob = new Blob(rec._chunks, { type: 'audio/webm' });
+          const uri = URL.createObjectURL(blob);
+
+          if (rec._stream) {
+            rec._stream.getTracks().forEach((t) => t.stop());
+          }
+
+          const agora = new Date();
+          const novoAudio = {
+            id: `audio-${Date.now()}`,
+            data: agora.toLocaleDateString('pt-BR'),
+            hora: `${String(agora.getHours()).padStart(2, '0')}:${String(agora.getMinutes()).padStart(2, '0')}`,
+            duracao: '00:05',
+            uri,
+            tamanho: blob.size || 0,
+            disponivel: true,
+            conectado: true,
+            isWeb: true,
+            ...metadata,
+          };
+
+          const raw = await AsyncStorage.getItem(STORAGE_KEY);
+          const lista = raw ? JSON.parse(raw) : [];
+          lista.unshift(novoAudio);
+          await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(lista));
+
+          recorderInstance = null;
+          resolve({ success: true, audio: novoAudio });
+        };
+
+        rec.stop();
+      });
+    } catch (error) {
+      console.error('Erro ao parar gravação (web):', error);
+      return { success: false, message: error.message };
+    }
+  }
+
+  // Mobile
   try {
     const rec = recorder || recorderInstance;
     if (!rec) throw new Error('Nenhuma gravação ativa');
@@ -88,7 +190,6 @@ export const pararGravacao = async (recorder, metadata = {}) => {
     const arquivoTemp = new File(uriTemp);
     const arquivoFinal = new File(AUDIO_DIR, `${id}.m4a`);
 
-    // Move para pasta permanente
     arquivoTemp.move(arquivoFinal);
 
     const duracaoSegundos = Math.round(rec.currentTime || 0);
@@ -114,7 +215,6 @@ export const pararGravacao = async (recorder, metadata = {}) => {
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(lista));
 
     recorderInstance = null;
-
     console.log('🎙️ Áudio salvo:', novoAudio.uri);
     return { success: true, audio: novoAudio };
   } catch (error) {
@@ -132,36 +232,34 @@ export const listarGravacoes = async () => {
 };
 
 // ============================================================
-// 🚨 LIMPAR ÁUDIOS MOCK (dados hipotéticos antigos)
+// LIMPAR HIPOTÉTICOS
 // ============================================================
 export const limparAudiosHipoteticos = async () => {
+  // Na web, não temos FileSystem — mantém tudo
+  if (Platform.OS === 'web') {
+    return { success: true, removidos: 0 };
+  }
+
   try {
     const raw = await AsyncStorage.getItem(STORAGE_KEY);
     if (!raw) return { success: true, removidos: 0 };
 
     const lista = JSON.parse(raw);
-
-    // Filtra: só mantém o que tiver arquivo físico existente
     const validos = [];
+
     for (const audio of lista) {
       try {
         const arquivo = new File(audio.uri);
         if (arquivo.exists) {
           validos.push(audio);
-        } else {
-          console.log('🗑️ Removendo mock:', audio.uri);
         }
       } catch (e) {
-        // Se não conseguiu checar, descarta
+        // descarta
       }
     }
 
     await AsyncStorage.setItem(STORAGE_KEY, JSON.stringify(validos));
-
-    const removidos = lista.length - validos.length;
-    console.log(`🗑️ Removidos ${removidos} áudios hipotéticos`);
-
-    return { success: true, removidos };
+    return { success: true, removidos: lista.length - validos.length };
   } catch (error) {
     console.error('Erro ao limpar hipotéticos:', error);
     return { success: false, message: error.message };
@@ -174,14 +272,24 @@ export const limparAudiosHipoteticos = async () => {
 let currentPlayer = null;
 
 export const reproduzirAudio = async (uri) => {
-  try {
-    if (!uri) {
-      return { success: false, message: 'URI inválida' };
+  if (Platform.OS === 'web') {
+    try {
+      const audio = new Audio(uri);
+      audio.play();
+      currentPlayer = audio;
+      return { success: true, player: audio };
+    } catch (error) {
+      console.error('Erro ao reproduzir (web):', error);
+      return { success: false, message: error.message };
     }
+  }
+
+  try {
+    if (!uri) return { success: false, message: 'URI inválida' };
 
     const arquivo = new File(uri);
     if (!arquivo.exists) {
-      return { success: false, message: 'Arquivo de áudio não encontrado' };
+      return { success: false, message: 'Arquivo não encontrado' };
     }
 
     await setAudioModeAsync({
@@ -189,10 +297,8 @@ export const reproduzirAudio = async (uri) => {
       playsInSilentMode: true,
     });
 
-    // 🔑 API correta: createAudioPlayer recebe a URI diretamente
     const player = createAudioPlayer(uri);
     player.play();
-
     currentPlayer = player;
 
     return { success: true, player };
@@ -208,13 +314,16 @@ export const reproduzirAudio = async (uri) => {
 export const pararReproducao = async () => {
   try {
     if (currentPlayer) {
-      currentPlayer.pause();
-      if (currentPlayer.remove) currentPlayer.remove();
+      if (Platform.OS === 'web') {
+        currentPlayer.pause();
+      } else {
+        currentPlayer.pause();
+        if (currentPlayer.remove) currentPlayer.remove();
+      }
       currentPlayer = null;
     }
     return { success: true };
   } catch (error) {
-    console.error('Erro ao parar reprodução:', error);
     return { success: false, message: error.message };
   }
 };
@@ -224,11 +333,9 @@ export const pararReproducao = async () => {
 // ============================================================
 export const deletarAudio = async (audioId, uri) => {
   try {
-    if (uri) {
+    if (Platform.OS !== 'web' && uri) {
       const arquivo = new File(uri);
-      if (arquivo.exists) {
-        arquivo.delete();
-      }
+      if (arquivo.exists) arquivo.delete();
     }
 
     const raw = await AsyncStorage.getItem(STORAGE_KEY);

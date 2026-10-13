@@ -17,8 +17,13 @@ import {
   verificarPerimetro,
   listarLocalizacoes,
   listarPerimetros,
+  listarRotas,
 } from '../database/db';
-import { treinarModelo, analisarPosicao } from '../services/iaService';
+import {
+  treinarModelo,
+  analisarPosicao,
+  analisarRota,
+} from '../services/iaService';
 
 export default function Mapa({ userData, onNavigate }) {
   const [location, setLocation] = useState(null);
@@ -27,6 +32,7 @@ export default function Mapa({ userData, onNavigate }) {
   // 🧠 Estados da IA
   const [iaInicializada, setIaInicializada] = useState(false);
   const [alertaDisparado, setAlertaDisparado] = useState(false);
+  const [statusRota, setStatusRota] = useState(null);
 
   const insets = useSafeAreaInsets();
 
@@ -34,17 +40,17 @@ export default function Mapa({ userData, onNavigate }) {
   const webMarkerRef = useRef(null);
   const webMapContainerRef = useRef(null);
 
-  // 🧠 Ref que guarda o modelo treinado + perímetros
+  // 🧠 Refs
   const iaModeloRef = useRef({ modelo: null, perimetros: [] });
+  const rotaRef = useRef(null);
 
   const nomeCrianca = userData?.nome || 'Criança';
 
   /*
    * ============================================================
-   * 🧠 IA: TREINAR MODELO COM O HISTÓRICO AO ABRIR A TELA
+   * 🧠 IA: TREINAR MODELO + CARREGAR ROTA AO ABRIR A TELA
    * ============================================================
    */
-
   useEffect(() => {
     let ativo = true;
 
@@ -54,9 +60,10 @@ export default function Mapa({ userData, onNavigate }) {
       try {
         console.log('🧠 Inicializando IA preditiva...');
 
-        const [historico, perimetros] = await Promise.all([
+        const [historico, perimetros, rotas] = await Promise.all([
           listarLocalizacoes(userData.id),
           listarPerimetros(userData.id),
+          listarRotas(userData.id),
         ]);
 
         const modelo = treinarModelo(historico || []);
@@ -72,6 +79,17 @@ export default function Mapa({ userData, onNavigate }) {
         if (!ativo) return;
 
         iaModeloRef.current = { modelo, perimetros: perimetros || [] };
+
+        // 🛣️ Carrega a última rota (se existir)
+        if (rotas && rotas.length > 0) {
+          const ultimaRota = rotas[rotas.length - 1];
+          rotaRef.current = ultimaRota;
+          console.log('🛣️ Rota carregada:', {
+            nome: ultimaRota.nome,
+            pontos: ultimaRota.coordenadas?.length || 0,
+          });
+        }
+
         setIaInicializada(true);
       } catch (error) {
         console.error('❌ Erro ao inicializar IA:', error);
@@ -90,7 +108,6 @@ export default function Mapa({ userData, onNavigate }) {
    * LOCALIZAÇÃO
    * ============================================================
    */
-
   useEffect(() => {
     let locationSubscription = null;
     let isMounted = true;
@@ -139,30 +156,44 @@ export default function Mapa({ userData, onNavigate }) {
               newLocation.coords.longitude
             );
 
-            const resultado = await verificarPerimetro(
-              userData.id,
-              newLocation.coords.latitude,
-              newLocation.coords.longitude
-            );
+            const posicaoAtual = {
+              latitude: newLocation.coords.latitude,
+              longitude: newLocation.coords.longitude,
+            };
 
             const { modelo, perimetros } = iaModeloRef.current;
-            const analise = analisarPosicao({
-              posicaoAtual: {
-                latitude: newLocation.coords.latitude,
-                longitude: newLocation.coords.longitude,
-              },
+
+            // Análise comportamental
+            const analiseComportamento = analisarPosicao({
+              posicaoAtual,
               modelo,
               perimetros,
             });
 
-            console.log('🧠 Análise IA:', analise);
+            // 🛣️ Análise de rota
+            const analiseRota = analisarRota({
+              posicaoAtual,
+              rota: rotaRef.current,
+            });
 
-            if (analise.anomalia && !alertaDisparado) {
+            console.log('🧠 Análise Comportamento:', analiseComportamento);
+            console.log('🛣️ Análise Rota:', analiseRota);
+
+            // Atualiza status visual da rota
+            setStatusRota(analiseRota.status);
+
+            const desviou = analiseRota.status === 'desviou_rota';
+
+            if ((analiseComportamento.anomalia || desviou) && !alertaDisparado) {
               setAlertaDisparado(true);
 
+              const motivo = desviou
+                ? analiseRota.motivo
+                : analiseComportamento.motivo;
+
               Alert.alert(
-                'Alerta de Segurança',
-                analise.motivo || `${userData.nome} saiu da área segura.`,
+                '⚠️ Alerta de Segurança',
+                motivo || `${userData.nome} saiu do trajeto seguro.`,
                 [
                   { text: 'Ficar aqui', style: 'cancel' },
                   {
@@ -190,27 +221,39 @@ export default function Mapa({ userData, onNavigate }) {
 
   /*
    * ============================================================
-   * 🧠 IA: ANALISAR POSIÇÃO ATUAL QUANDO A LOCALIZAÇÃO CHEGA
+   * 🧠 IA: ANALISAR QUANDO A LOCALIZAÇÃO MUDA (reforço)
    * ============================================================
    */
-
   useEffect(() => {
     if (!location || !iaInicializada || alertaDisparado) return;
 
     const { modelo, perimetros } = iaModeloRef.current;
 
-    const analise = analisarPosicao({
+    const analiseComportamento = analisarPosicao({
       posicaoAtual: location,
       modelo,
       perimetros,
     });
 
-    if (analise.anomalia) {
+    const analiseRota = analisarRota({
+      posicaoAtual: location,
+      rota: rotaRef.current,
+    });
+
+    setStatusRota(analiseRota.status);
+
+    const desviou = analiseRota.status === 'desviou_rota';
+
+    if (analiseComportamento.anomalia || desviou) {
       setAlertaDisparado(true);
 
+      const motivo = desviou
+        ? analiseRota.motivo
+        : analiseComportamento.motivo;
+
       Alert.alert(
-        'Alerta de Segurança',
-        analise.motivo || `${nomeCrianca} saiu da área segura.`,
+        '⚠️ Alerta de Segurança',
+        motivo || `${nomeCrianca} saiu do trajeto seguro.`,
         [
           { text: 'Ficar aqui', style: 'cancel' },
           {
@@ -227,13 +270,26 @@ export default function Mapa({ userData, onNavigate }) {
    * HTML DO MAPA PARA ANDROID / IOS
    * ============================================================
    */
-
-  const gerarHTML = (lat, lng, nome) => {
+  const gerarHTML = (lat, lng, nome, rota) => {
     const nomeSeguro = String(nome)
       .replace(/\\/g, '\\\\')
       .replace(/"/g, '\\"')
       .replace(/'/g, "\\'")
       .replace(/\n/g, ' ');
+
+    // Polyline da rota (se existir)
+    let rotaJS = '';
+    if (rota && rota.coordenadas && rota.coordenadas.length > 0) {
+      const pontos = JSON.stringify(
+        rota.coordenadas.map((p) => [p.latitude, p.longitude])
+      );
+      rotaJS = `
+        var pontosRota = ${pontos};
+        var polyline = L.polyline(pontosRota, {
+          color: '#1E3A8A', weight: 5, opacity: 0.7, dashArray: '8, 8'
+        }).addTo(map);
+      `;
+    }
 
     return `
       <!DOCTYPE html>
@@ -253,12 +309,14 @@ export default function Mapa({ userData, onNavigate }) {
           var latitude = ${lat};
           var longitude = ${lng};
 
-          var map = L.map('map', { zoomControl: true }).setView([latitude, longitude], 16);
+          var map = L.map('map', { zoomControl: true }).setView([latitude, longitude], 15);
 
           L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
             maxZoom: 19,
             attribution: '&copy; OpenStreetMap'
           }).addTo(map);
+
+          ${rotaJS}
 
           var marker = L.marker([latitude, longitude]).addTo(map);
           marker.bindPopup("<b>${nomeSeguro}</b><br>Localização atual").openPopup();
@@ -286,7 +344,6 @@ export default function Mapa({ userData, onNavigate }) {
    * ATUALIZA MAPA NATIVO
    * ============================================================
    */
-
   useEffect(() => {
     if (Platform.OS !== 'web' && location && webMapRef.current) {
       const mensagem = JSON.stringify({
@@ -299,16 +356,16 @@ export default function Mapa({ userData, onNavigate }) {
 
   /*
    * ============================================================
-   * MAPA WEB
+   * MAPA WEB (com rota)
    * ============================================================
    */
-
   useEffect(() => {
     if (Platform.OS !== 'web' || !location || !webMapContainerRef.current) {
       return;
     }
 
     let ativo = true;
+    let polylineRef = null;
 
     const iniciarMapaWeb = async () => {
       try {
@@ -327,7 +384,7 @@ export default function Mapa({ userData, onNavigate }) {
         if (!webMapRef.current) {
           webMapRef.current = L.map(webMapContainerRef.current).setView(
             [location.latitude, location.longitude],
-            16
+            15
           );
 
           L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
@@ -341,6 +398,15 @@ export default function Mapa({ userData, onNavigate }) {
             iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
             shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
           });
+
+          // 🛣️ Rota
+          const rota = rotaRef.current;
+          if (rota && rota.coordenadas && rota.coordenadas.length > 0) {
+            const pontos = rota.coordenadas.map((p) => [p.latitude, p.longitude]);
+            polylineRef = L.polyline(pontos, {
+              color: '#1E3A8A', weight: 5, opacity: 0.7, dashArray: '8, 8',
+            }).addTo(webMapRef.current);
+          }
 
           webMarkerRef.current = L.marker([location.latitude, location.longitude]).addTo(webMapRef.current);
           webMarkerRef.current.bindPopup(`<b>${nomeCrianca}</b><br/>Localização atual`).openPopup();
@@ -368,7 +434,6 @@ export default function Mapa({ userData, onNavigate }) {
    * LIMPEZA DO MAPA WEB
    * ============================================================
    */
-
   useEffect(() => {
     return () => {
       if (webMapRef.current) {
@@ -384,7 +449,6 @@ export default function Mapa({ userData, onNavigate }) {
    * RENDERIZAÇÃO DO MAPA
    * ============================================================
    */
-
   const renderMapa = () => {
     if (errorMsg) {
       return (
@@ -410,7 +474,14 @@ export default function Mapa({ userData, onNavigate }) {
           ref={webMapRef}
           style={styles.map}
           originWhitelist={['*']}
-          source={{ html: gerarHTML(location.latitude, location.longitude, nomeCrianca) }}
+          source={{
+            html: gerarHTML(
+              location.latitude,
+              location.longitude,
+              nomeCrianca,
+              rotaRef.current
+            ),
+          }}
           javaScriptEnabled
           domStorageEnabled
           startInLoadingState
@@ -425,10 +496,36 @@ export default function Mapa({ userData, onNavigate }) {
 
   /*
    * ============================================================
+   * BADGE DE STATUS DA ROTA
+   * ============================================================
+   */
+  const renderStatusRota = () => {
+    if (!statusRota) return null;
+
+    const config = {
+      seguindo_rota: { cor: '#10B981', icone: 'checkmark-circle', texto: 'Seguindo rota' },
+      chegou_destino: { cor: '#1E3A8A', icone: 'flag', texto: 'Chegou ao destino' },
+      saiu_origem: { cor: '#6B7280', icone: 'home', texto: 'No ponto de partida' },
+      desviou_rota: { cor: '#DC2626', icone: 'warning', texto: 'Desviou da rota' },
+      sem_rota: null,
+    };
+
+    const info = config[statusRota];
+    if (!info) return null;
+
+    return (
+      <View style={[styles.rotaBadge, { backgroundColor: info.cor }]}>
+        <Ionicons name={info.icone} size={14} color="#FFF" />
+        <Text style={styles.rotaBadgeText}>{info.texto}</Text>
+      </View>
+    );
+  };
+
+  /*
+   * ============================================================
    * INTERFACE
    * ============================================================
    */
-
   return (
     <SafeAreaView style={styles.container}>
       {/* HEADER */}
@@ -463,6 +560,9 @@ export default function Mapa({ userData, onNavigate }) {
       <View style={styles.mapContainer}>
         {renderMapa()}
 
+        {/* Badge de status da rota */}
+        {renderStatusRota()}
+
         <View style={styles.gpsInfo}>
           <Text style={styles.gpsInfoText}>
             {location
@@ -472,7 +572,7 @@ export default function Mapa({ userData, onNavigate }) {
         </View>
       </View>
 
-      {/* STATUS - LINHA 1: 3 PRIMEIROS ÍCONES */}
+      {/* STATUS - LINHA 1 */}
       <View style={styles.statusRow}>
         <TouchableOpacity
           style={styles.statusItem}
@@ -508,7 +608,7 @@ export default function Mapa({ userData, onNavigate }) {
         </TouchableOpacity>
       </View>
 
-      {/* STATUS - LINHA 2: MICROFONE + CÂMERA */}
+      {/* STATUS - LINHA 2 */}
       <View style={styles.statusRowSecondary}>
         <TouchableOpacity
           style={styles.statusItem}
@@ -633,15 +733,30 @@ const styles = StyleSheet.create({
   },
   gpsInfoText: { fontSize: 10, color: '#333333', textAlign: 'center' },
 
-  // LINHA 1: 3 ícones lado a lado
+  // Badge de status da rota
+  rotaBadge: {
+    position: 'absolute',
+    top: 10,
+    left: 10,
+    flexDirection: 'row',
+    alignItems: 'center',
+    paddingHorizontal: 10,
+    paddingVertical: 5,
+    borderRadius: 20,
+    gap: 4,
+  },
+  rotaBadgeText: {
+    color: '#FFF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+
   statusRow: {
     flexDirection: 'row',
     justifyContent: 'space-around',
     marginBottom: 15,
     paddingHorizontal: 10,
   },
-
-  // LINHA 2: microfone + câmera centralizados
   statusRowSecondary: {
     flexDirection: 'row',
     justifyContent: 'center',
@@ -649,7 +764,6 @@ const styles = StyleSheet.create({
     marginBottom: 20,
     paddingHorizontal: 10,
   },
-
   statusItem: { alignItems: 'center', width: 90 },
   statusIconCircle: {
     width: 50, height: 50, borderRadius: 25, backgroundColor: '#FFFFFF',

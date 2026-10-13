@@ -38,7 +38,6 @@ const agruparPorProximidade = (pontos, raioMetros = 150) => {
 
       if (dist <= raioMetros) {
         cluster.pontos.push(ponto);
-        // Recalcula centroide
         cluster.centroide.latitude =
           cluster.pontos.reduce((s, p) => s + p.latitude, 0) / cluster.pontos.length;
         cluster.centroide.longitude =
@@ -61,7 +60,6 @@ const agruparPorProximidade = (pontos, raioMetros = 150) => {
 
 // ============================================================
 // 🧠 TREINAR MODELO COM O HISTÓRICO
-// Retorna: locais habituais, raio típico de deslocamento, etc.
 // ============================================================
 export const treinarModelo = (historico) => {
   if (!historico || historico.length < 3) {
@@ -71,13 +69,11 @@ export const treinarModelo = (historico) => {
     };
   }
 
-  // 1. Centroide geral (média de todos os pontos)
   const centroideGeral = {
     latitude: historico.reduce((s, h) => s + h.latitude, 0) / historico.length,
     longitude: historico.reduce((s, h) => s + h.longitude, 0) / historico.length,
   };
 
-  // 2. Raio típico (desvio padrão das distâncias ao centroide)
   const distancias = historico.map((h) =>
     calcularDistancia(h.latitude, h.longitude, centroideGeral.latitude, centroideGeral.longitude)
   );
@@ -87,10 +83,9 @@ export const treinarModelo = (historico) => {
     distancias.reduce((s, d) => s + Math.pow(d - mediaDistancia, 2), 0) / distancias.length;
   const desvioPadrao = Math.sqrt(variancia);
 
-  // 3. Locais habituais (clusters onde a criança passa mais tempo)
   const clusters = agruparPorProximidade(historico, 150);
   const locaisHabituais = clusters
-    .filter((c) => c.pontos.length >= 2) // aparece ao menos 2x
+    .filter((c) => c.pontos.length >= 2)
     .map((c) => ({
       latitude: c.centroide.latitude,
       longitude: c.centroide.longitude,
@@ -103,7 +98,6 @@ export const treinarModelo = (historico) => {
     centroideGeral,
     mediaDistancia: Math.round(mediaDistancia),
     desvioPadrao: Math.round(desvioPadrao),
-    // Limite considerado "normal": média + 2 * desvio padrão
     limiarAnomalia: Math.round(mediaDistancia + 2 * desvioPadrao),
     locaisHabituais,
     totalRegistros: historico.length,
@@ -111,7 +105,7 @@ export const treinarModelo = (historico) => {
 };
 
 // ============================================================
-// 🔍 ANALISAR POSIÇÃO ATUAL CONTRA O MODELO + PERÍMETRO
+// 🔍 ANALISAR POSIÇÃO (perímetro + padrão)
 // ============================================================
 export const analisarPosicao = ({
   posicaoAtual,
@@ -149,7 +143,6 @@ export const analisarPosicao = ({
     resultado.distanciaPerimetro = Math.round(menorDistancia);
     resultado.perimetroMaisProximo = perimetroMaisProximo;
 
-    // Se a criança está FORA do perímetro seguro
     if (perimetroMaisProximo && menorDistancia > (perimetroMaisProximo.raio || 500)) {
       resultado.anomalia = true;
       resultado.motivo = `Saiu da área segura "${perimetroMaisProximo.nome || 'Sem nome'}" (${resultado.distanciaPerimetro}m de distância do centro).`;
@@ -175,5 +168,127 @@ export const analisarPosicao = ({
     }
   }
 
+  return resultado;
+};
+
+// ============================================================
+// 🛣️ DISTÂNCIA MÍNIMA ATÉ UMA POLYLINE
+// ============================================================
+export const distanciaAteRota = (ponto, coordenadasRota) => {
+  if (!coordenadasRota || coordenadasRota.length === 0) return Infinity;
+
+  let menor = Infinity;
+
+  for (const coord of coordenadasRota) {
+    const d = calcularDistancia(
+      ponto.latitude,
+      ponto.longitude,
+      coord.latitude,
+      coord.longitude
+    );
+    if (d < menor) menor = d;
+  }
+
+  return menor;
+};
+
+// ============================================================
+// 🧠 ANALISAR SE ESTÁ SEGUINDO A ROTA
+// ============================================================
+const TOLERANCIA_ROTA_METROS = 150;
+const RAIO_PONTO_METROS = 100;
+
+export const analisarRota = ({
+  posicaoAtual,
+  rota,
+  toleranciaMetros = TOLERANCIA_ROTA_METROS,
+  raioPontoMetros = RAIO_PONTO_METROS,
+}) => {
+  const resultado = {
+    status: 'sem_rota',
+    anomalia: false,
+    motivo: null,
+    distanciaRota: null,
+    distanciaOrigem: null,
+    distanciaDestino: null,
+    progresso: 0,
+    pontoMaisProximo: null,
+  };
+
+  if (!rota || !rota.coordenadas || rota.coordenadas.length === 0) {
+    return resultado;
+  }
+
+  const polyline = rota.coordenadas;
+  const origem = polyline[0];
+  const destino = polyline[polyline.length - 1];
+
+  resultado.distanciaRota = Math.round(distanciaAteRota(posicaoAtual, polyline));
+
+  resultado.distanciaOrigem = Math.round(
+    calcularDistancia(
+      posicaoAtual.latitude,
+      posicaoAtual.longitude,
+      origem.latitude,
+      origem.longitude
+    )
+  );
+
+  resultado.distanciaDestino = Math.round(
+    calcularDistancia(
+      posicaoAtual.latitude,
+      posicaoAtual.longitude,
+      destino.latitude,
+      destino.longitude
+    )
+  );
+
+  let menorDist = Infinity;
+  let idxMaisProximo = 0;
+
+  for (let i = 0; i < polyline.length; i++) {
+    const d = calcularDistancia(
+      posicaoAtual.latitude,
+      posicaoAtual.longitude,
+      polyline[i].latitude,
+      polyline[i].longitude
+    );
+    if (d < menorDist) {
+      menorDist = d;
+      idxMaisProximo = i;
+    }
+  }
+
+  resultado.pontoMaisProximo = idxMaisProximo;
+  resultado.progresso =
+    polyline.length > 1
+      ? Math.round((idxMaisProximo / (polyline.length - 1)) * 100)
+      : 0;
+
+  // 1) Chegou ao destino
+  if (resultado.distanciaDestino <= raioPontoMetros) {
+    resultado.status = 'chegou_destino';
+    resultado.motivo = `Chegou ao destino (${resultado.distanciaDestino}m do ponto final).`;
+    return resultado;
+  }
+
+  // 2) Ainda na origem
+  if (resultado.distanciaOrigem <= raioPontoMetros) {
+    resultado.status = 'saiu_origem';
+    resultado.motivo = `Ainda no ponto de partida (${resultado.distanciaOrigem}m do início).`;
+    return resultado;
+  }
+
+  // 3) Seguindo a rota
+  if (resultado.distanciaRota <= toleranciaMetros) {
+    resultado.status = 'seguindo_rota';
+    resultado.motivo = `Seguindo a rota (${resultado.distanciaRota}m da linha, ${resultado.progresso}% percorrido).`;
+    return resultado;
+  }
+
+  // 4) Desviou
+  resultado.status = 'desviou_rota';
+  resultado.anomalia = true;
+  resultado.motivo = `Desviou da rota (${resultado.distanciaRota}m fora do trajeto).`;
   return resultado;
 };

@@ -9,6 +9,7 @@ import NovaCrianca from './components/NovaCriancas';
 import Mapa from './components/Mapa';
 import Perfil from './components/Perfil';
 import PerfilCrianca from './components/PerfilCrianca';
+import PerimetrosSeguros from './components/PerimetrosSeguros';
 import Alerta from './components/Alerta';
 import MapaCriancaAlerta from './components/MapaCriancaAlerta';
 import NovaRota from './components/NovaRota';
@@ -67,7 +68,8 @@ export default function App() {
       screen === 'historicoCrianca' ||
       screen === 'historicoMicrofone' ||
       screen === 'historicoCamera' ||
-      screen === 'cameraCapture'
+      screen === 'cameraCapture' ||
+      screen === 'perimetrosSeguros'
     ) {
       if (data) setSelectedChild(data);
     }
@@ -104,6 +106,15 @@ export default function App() {
       )}
       {currentScreen === 'perfilCrianca' && (
         <PerfilCrianca userData={selectedChild} onNavigate={navigateTo} />
+      )}
+
+      {/* PERÍMETROS SEGUROS */}
+      {currentScreen === 'perimetrosSeguros' && (
+        <PerimetrosSeguros
+          userData={selectedChild}
+          onNavigate={navigateTo}
+          previousScreen={previousScreen}
+        />
       )}
 
       {/* TELAS DE ROTA / ÁREA SEGURA */}
